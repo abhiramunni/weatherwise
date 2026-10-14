@@ -18,6 +18,8 @@ A stunning, animated weather app with live forecasts, rain alerts, and city sear
 ## How to use
 
 1. Allow location (or skip) — the app loads weather for your area, defaulting to Indian cities.
+
+<!-- rebuild trigger -->
 2. Search any city in the search bar and tap a result; star it to save as a favorite.
 3. Scroll for the hourly strip and 7-day outlook; toggle °C/°F anytime.
 4. First visit shows a 30-second guided tour explaining each section.
