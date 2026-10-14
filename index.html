@@ -182,8 +182,10 @@
   .heroicon .wi-rays{animation-duration:40s}
 
   /* ---------- world-class polish: kv rows, glass refinement, micro-interactions ---------- */
-  .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-  .kv b{font-weight:500;color:var(--ink-dim);white-space:nowrap}
+  .kv{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .kv>span{flex:none;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kv>b{flex:none;white-space:nowrap;margin-left:auto;font-weight:500;color:var(--ink-dim)}
+  .tile.span2{grid-column:span 2}
   .tile,.card{position:relative}
   .tile::before,.card::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
     box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(0,0,0,.12)}
@@ -430,19 +432,26 @@ async function fetchAQI(lat, lon){
   if(!j.current || j.current.us_aqi==null) throw new Error("bad aqi payload");
   return j.current.us_aqi;
 }
-/* reverse-geocode device coords -> "City, Region" (free, no key). Never blank. */
+/* reverse-geocode device coords -> {name,admin1,country}. Free no-key chain; never throws. */
+async function fetchOnce(url,ms){
+  const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),ms||8000);
+  try{ const r=await fetch(url,{signal:ctl.signal,redirect:"follow"}); clearTimeout(to); return r; }
+  catch(e){ clearTimeout(to); return null; }
+}
 async function reverseName(lat, lon){
-  try{
-    const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),9000);
-    const r=await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude="+lat.toFixed(4)+
-      "&longitude="+lon.toFixed(4)+"&localityLanguage=en",{signal:ctl.signal});
-    clearTimeout(to);
-    if(!r.ok) return null;
-    const j=await r.json();
-    const name=j.city||j.locality||"";
-    if(!name) return null;
-    return {name:name, admin1:j.principalSubdivision||"", country:j.countryName||""};
-  }catch(e){ return null; }
+  const la=lat.toFixed(4), lo=lon.toFixed(4);
+  for(let a=0;a<2;a++){ /* BigDataCloud, one silent retry */
+    const r=await fetchOnce("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude="+la+"&longitude="+lo+"&localityLanguage=en");
+    if(r&&r.ok){ try{ const j=await r.json(); const name=j.city||j.locality||"";
+      if(name) return {name:name,admin1:j.principalSubdivision||"",country:j.countryName||""}; }catch(e){} }
+  }
+  for(let a=0;a<2;a++){ /* Nominatim fallback */
+    const r=await fetchOnce("https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat="+la+"&lon="+lo+"&zoom=10&accept-language=en");
+    if(r&&r.ok){ try{ const j=await r.json(), ad=j.address||{};
+      const name=ad.city||ad.town||ad.village||ad.hamlet||ad.suburb||ad.county||"";
+      if(name) return {name:name,admin1:ad.state||"",country:ad.country||""}; }catch(e){} }
+  }
+  return null;
 }
 async function loadCity(city, opts){
   opts = opts||{};
@@ -855,9 +864,9 @@ function renderAll(data, fetchedAt, aqi){
   }catch(e){} }
 }
 
-/* rain alert: worst contiguous window with pp>=70 in next 24h */
+/* rain alert: worst contiguous window with pp>=70 in the NEXT 24h (future hours only, never past) */
 function worstWindow(data){
-  const H=data.hourly, s=state.hourIdx, end=Math.min(s+24,H.time.length);
+  const H=data.hourly, s=state.hourIdx+1, end=Math.min(s+24,H.time.length);
   let best=null, cur=null;
   for(let i=s;i<end;i++){
     const pp=H.precipitation_probability[i]??0;
@@ -867,10 +876,17 @@ function worstWindow(data){
   if(cur && (!best || (cur.b-cur.a)>(best.b-best.a))) best=cur;
   return best;
 }
+function timeLabel(iso){ const h=+iso.slice(11,13), ap=h<12?"AM":"PM"; return (h%12||12)+" "+ap; }
+function dayLabel(d,todayStr){ return d===todayStr?"today":(d>todayStr?"tomorrow":""); }
+function fmtWindow(aIso,bIso,todayStr){
+  const da=aIso.slice(0,10), db=bIso.slice(0,10), ta=timeLabel(aIso), tb=timeLabel(bIso);
+  if(da===db) return dayLabel(da,todayStr)+" "+ta+" \u2013 "+tb;
+  return dayLabel(da,todayStr)+" "+ta+" \u2013 "+dayLabel(db,todayStr)+" "+tb;
+}
 function renderAlert(data){
   const w=worstWindow(data), b=$("alertBanner");
-  if(w){ const H=data.hourly;
-    $("alertText").textContent="Up to "+w.max+"% chance between "+fmtHourShort(H.time[w.a])+" and "+fmtHourShort(H.time[w.b])+". Plan indoor time and carry rain gear.";
+  if(w){ const H=data.hourly, todayStr=data.current.time.slice(0,10);
+    $("alertText").textContent="Up to "+w.max+"% chance "+fmtWindow(H.time[w.a],H.time[w.b],todayStr)+". Plan indoor time and carry rain gear.";
     b.classList.add("show");
   } else b.classList.remove("show");
 }
@@ -880,9 +896,12 @@ function renderSummary(data,info){
   for(let i=s;i<end;i++){ const pp=H.precipitation_probability[i]??0; if(pp>maxPP){maxPP=pp; maxT=H.time[i];} }
   const t=fmtT(data.current.temperature_2m)+deg(), hr=+data.current.time.slice(11,13);
   const part=hr<12?"morning":hr<17?"afternoon":hr<21?"evening":"night";
-  const w=worstWindow(data);
+  const w=worstWindow(data), todayStr=data.current.time.slice(0,10);
+  const nowP=H.precipitation[s]??0, nowMm=(Math.round(nowP*10)/10);
   let s2;
-  if(w) s2="Carry an umbrella — "+w.max+"% rain likely between "+fmtHourShort(H.time[w.a])+" and "+fmtHourShort(H.time[w.b])+".";
+  if(nowP>=0.1&&w) s2="Raining now ("+nowMm+" mm/h). Up to "+w.max+"% chance continues "+fmtWindow(H.time[w.a],H.time[w.b],todayStr)+" — keep the umbrella handy.";
+  else if(nowP>=0.1) s2="Raining now ("+nowMm+" mm/h) at "+t+".";
+  else if(w) s2="No rain right now, but up to "+w.max+"% chance "+fmtWindow(H.time[w.a],H.time[w.b],todayStr)+" — carry an umbrella.";
   else if(maxPP>=40) s2="Rain is possible ("+maxPP+"% around "+fmtHourShort(maxT)+") — keep an eye on the sky.";
   else if(info.cat==="clear") s2="Clear skies at "+t+" — a pleasant "+part+" ahead.";
   else s2=info.label+" and "+t+" this "+part+".";
@@ -952,8 +971,24 @@ function arcSVG(cx,cy,r,frac,color,bg){
     (frac>0.001?'<path d="M'+(cx-r)+' '+cy+' A'+r+' '+r+' 0 '+large+' 1 '+ex.toFixed(1)+' '+ey.toFixed(1)+'" fill="none" stroke="'+color+'" stroke-width="7" stroke-linecap="round" pathLength="1" class="drawin"/>':"")+
     '<circle cx="'+ex.toFixed(1)+'" cy="'+ey.toFixed(1)+'" r="7" fill="#fff"/></svg>';
 }
+/* clean semicircular pressure gauge: track + ticks + needle at true value position */
+function pressureGauge(p){
+  const lo=980, hi=1040, f=Math.max(0,Math.min(1,(p-lo)/(hi-lo)));
+  const cx=70, cy=66, r=50, a=Math.PI-f*Math.PI;
+  const nx=cx+r*Math.cos(a), ny=cy-r*Math.sin(a);
+  let ticks="";
+  for(let k=0;k<=12;k++){ const ta=Math.PI-k*Math.PI/12, big=k%3===0, r1=big?40:44;
+    ticks+='<line x1="'+(cx+r1*Math.cos(ta)).toFixed(1)+'" y1="'+(cy-r1*Math.sin(ta)).toFixed(1)+
+      '" x2="'+(cx+r*Math.cos(ta)).toFixed(1)+'" y2="'+(cy-r*Math.sin(ta)).toFixed(1)+
+      '" stroke="rgba(255,255,255,'+(big?".55":"0.25")+')" stroke-width="'+(big?2:1)+'"/>'; }
+  return '<svg class="viz" viewBox="0 0 140 78" style="height:84px">'+
+    '<path d="M'+(cx-r)+' '+cy+' A'+r+' '+r+' 0 0 1 '+(cx+r)+' '+cy+'" fill="none" stroke="rgba(255,255,255,.16)" stroke-width="6" stroke-linecap="round"/>'+
+    ticks+
+    '<line x1="'+cx+'" y1="'+cy+'" x2="'+nx.toFixed(1)+'" y2="'+ny.toFixed(1)+'" stroke="#fff" stroke-width="3" stroke-linecap="round"/>'+
+    '<circle cx="'+cx+'" cy="'+cy+'" r="5" fill="#7dd3fc"/></svg>';
+}
 function renderTiles(data,aqi,nowMin,sr,ss){
-  const c=data.current, H=data.hourly, s=state.hourIdx, box=$("tiles");
+  const c=data.current, H=data.hourly, s=state.hourIdx, box=$("tiles"), WIDE="\u0001";
   const uv=Math.round(H.uv_index[s]??0);
   const uvLabel=uv<3?"Low":uv<6?"Moderate":uv<8?"High":uv<11?"Very High":"Extreme";
   const uvAdvice=uv<3?"No protection needed right now.":uv<6?"Seek shade around midday.":uv<8?"Use sun protection 8AM–4PM.":uv<11?"Avoid midday sun.":"Stay indoors around midday.";
@@ -981,8 +1016,8 @@ function renderTiles(data,aqi,nowMin,sr,ss){
   // pressure + trend
   const p=c.pressure_msl, p3=H.pressure_msl[Math.max(0,s-3)]??p;
   const pTrend=p-p3>0.5?"Rising":p-p3<-0.5?"Falling":"Steady";
-  const pArrow=pTrend==="Rising"?"↑":pTrend==="Falling"?"↓":"→";
-  const pFrac=Math.max(0,Math.min(1,(p-980)/60));
+  const pArrow=pTrend==="Rising"?"↑":pTrend==="Falling"?"↓":"";
+
   // moon
   const moon=moonInfo(new Date(c.time.slice(0,16).replace("T","T")));
   // aqi
@@ -1037,19 +1072,20 @@ function renderTiles(data,aqi,nowMin,sr,ss){
     '<div class="tsub">The dew point is '+fmtT(dp)+'° right now.</div>');
   // 8 PRESSURE
   tiles.push(tileHead(TI.gauge,"Pressure")+
-    '<div style="text-align:center;margin-top:2px"><div style="font-size:1.15rem">'+pArrow+'</div>'+
+    '<div style="text-align:center;margin-top:2px">'+(pArrow?'<div style="font-size:1.15rem;line-height:1">'+pArrow+'</div>':"")+
     '<div class="tbig">'+Math.round(p).toLocaleString("en-IN")+'</div><div class="tsub">hPa · '+pTrend+'</div></div>'+
-    arcSVG(70,72,52,pFrac,"#e8edfb")+
+    pressureGauge(p)+
     '<div style="display:flex;justify-content:space-between;color:var(--ink-faint);font-size:.75rem"><span>Low</span><span>High</span></div>');
   // 9 MOON
   const ill=Math.round(moon.illum*100);
-  tiles.push(tileHead(TI.moon,moon.name.toUpperCase())+
-    '<div style="display:flex;gap:12px;align-items:center;margin-top:8px">'+
-    '<div style="font-size:.85rem;line-height:2.1;flex:1;min-width:132px">'+
+  tiles.push(WIDE+tileHead(TI.moon,moon.name.toUpperCase())+
+    '<div style="display:flex;gap:16px;align-items:center;margin-top:8px;flex:1;min-width:0">'+
+    '<canvas id="moonCv" width="168" height="168" style="width:84px;height:84px;flex:none" aria-label="Moon phase: '+moon.name+', '+ill+'% illuminated"></canvas>'+
+    '<div style="font-size:.9rem;line-height:2.2;flex:1;min-width:0">'+
     '<div class="kv"><span>Illumination</span><b>'+ill+'%</b></div>'+
     '<div class="kv"><span>Moon age</span><b>'+Math.round(moon.age)+' days</b></div>'+
     '<div class="kv"><span>Next full moon</span><b>'+moon.toFull+' days</b></div></div>'+
-    '<canvas id="moonCv" width="152" height="152" style="width:76px;height:76px;flex:none" aria-label="Moon phase: '+moon.name+', '+ill+'% illuminated"></canvas></div>');
+    '</div>');
   // 10 AIR QUALITY
   tiles.push(tileHead(TI.aqi,"Air Quality")+
     (aqi==null?'<div class="tbig">—</div><div class="tsub">Air-quality data unavailable right now.</div>'
@@ -1057,7 +1093,7 @@ function renderTiles(data,aqi,nowMin,sr,ss){
     '<div style="margin-top:10px;height:6px;border-radius:3px;background:linear-gradient(90deg,#4ade80,#facc15,#fb923c,#f87171,#a855f7,#7f1d1d);position:relative">'+
     '<div style="position:absolute;top:-4px;left:calc('+(Math.min(aqi,300)/300*100).toFixed(1)+'% - 7px);width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,.25)"></div></div>'+
     '<div class="tsub" style="margin-top:10px">US AQI, updated hourly.</div>'));
-  box.innerHTML=tiles.map(t=>'<div class="tile">'+t+'</div>').join("");
+  box.innerHTML=tiles.map(t=>t.charAt(0)===WIDE?'<div class="tile span2">'+t.slice(1)+'</div>':'<div class="tile">'+t+'</div>').join("");
   const mcv=$("moonCv"); if(mcv&&mcv.getContext) drawMoon(mcv, moon.age/SYNODIC);
 }
 
