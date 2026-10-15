@@ -259,11 +259,6 @@
     <p class="summary" id="summaryLine">Fetching the latest forecast…</p>
   </section>
 
-  <div class="alert" id="alertBanner" role="alert">
-    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fb7185" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 3L2.5 20h19L12 3z"/><path d="M12 9.5v5"/><circle cx="12" cy="17" r=".5" fill="#fb7185"/></svg>
-    <div><b id="alertTitle">Heavy rain expected</b><span id="alertText"></span></div>
-  </div>
-
   <div class="card" id="hourlyCard">
     <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>Hourly forecast</h3>
     <div class="hstrip" id="hourlyStrip"></div>
@@ -850,7 +845,7 @@ function renderAll(data, fetchedAt, aqi){
   $("heroIcon").innerHTML=iconSVG(info.cat);
   $("heroHL").textContent="H:"+fmtT(data.daily.temperature_2m_max[0])+"°  L:"+fmtT(data.daily.temperature_2m_min[0])+"°";
   $("updatedAt").textContent="Updated "+new Date(fetchedAt).toLocaleTimeString("en-IN",{hour:"numeric",minute:"2-digit"});
-  renderAlert(data); renderSummary(data,info); renderHourly(data); renderDaily(data); renderTiles(data,aqi,nowMin,sr,ss);
+  renderSummary(data,info); renderHourly(data); renderDaily(data); renderTiles(data,aqi,nowMin,sr,ss);
   setSkyMode(info.cat,isDay,near); paintFavToggle();
   if(state.offline){
     const n=$("offlineNote");
@@ -882,13 +877,6 @@ function fmtWindow(aIso,bIso,todayStr){
   const da=aIso.slice(0,10), db=bIso.slice(0,10), ta=timeLabel(aIso), tb=timeLabel(bIso);
   if(da===db) return dayLabel(da,todayStr)+" "+ta+" \u2013 "+tb;
   return dayLabel(da,todayStr)+" "+ta+" \u2013 "+dayLabel(db,todayStr)+" "+tb;
-}
-function renderAlert(data){
-  const w=worstWindow(data), b=$("alertBanner");
-  if(w){ const H=data.hourly, todayStr=data.current.time.slice(0,10);
-    $("alertText").textContent="Up to "+w.max+"% chance "+fmtWindow(H.time[w.a],H.time[w.b],todayStr)+". Plan indoor time and carry rain gear.";
-    b.classList.add("show");
-  } else b.classList.remove("show");
 }
 function renderSummary(data,info){
   const H=data.hourly, s=state.hourIdx, end=Math.min(s+24,H.time.length);
@@ -1202,7 +1190,7 @@ $("unitC").onclick=()=>setUnit("C"); $("unitF").onclick=()=>setUnit("F");
 
 /* ================= onboarding ================= */
 const OB=[["Welcome to WeatherWise","Search any city with the magnifier up top and get a beautiful live forecast in seconds."],
-  ["Rain alerts, automatically","If heavy rain is coming, a banner tells you the exact hours — plus a plain-words tip like “carry an umbrella”."],
+  ["Rain, in plain words","The summary line tells you honestly whether it's raining now and when rain is expected — no hype, just the forecast."],
   ["Make it yours","Tap the star to pin cities, and switch °C/°F anytime. Your picks are saved on this device."]];
 let obStep=0;
 function showOnboard(){ obStep=0; paintOb(); $("onboard").classList.add("show"); }
